@@ -54,6 +54,14 @@
             font-size: 28px;
         }
         
+        .tagline {
+            font-style: italic;
+            color: #D4AF37;
+            font-size: 14px;
+            margin-top: 5px;
+            text-align: center;
+        }
+        
         .wallet {
             display: flex;
             align-items: center;
@@ -329,17 +337,13 @@
             flex: 1;
             overflow-y: auto;
             padding-right: 5px;
+            scrollbar-width: none; /* Firefox */
+            -ms-overflow-style: none; /* IE and Edge */
         }
         
         /* Hide scrollbar for Chrome, Safari and Opera */
         .leaderboard-list::-webkit-scrollbar {
             display: none;
-        }
-        
-        /* Hide scrollbar for IE, Edge and Firefox */
-        .leaderboard-list {
-            -ms-overflow-style: none;  /* IE and Edge */
-            scrollbar-width: none;  /* Firefox */
         }
         
         .leaderboard-item {
@@ -451,6 +455,8 @@
         @media (max-width: 768px) {
             .navbar {
                 padding: 15px;
+                flex-direction: column;
+                gap: 15px;
             }
             
             .container {
@@ -458,6 +464,10 @@
             }
             
             .game-buttons {
+                flex-direction: column;
+            }
+            
+            .amount-input {
                 flex-direction: column;
             }
         }
@@ -468,7 +478,10 @@
     <div class="navbar">
         <div class="logo">
             <i class="fas fa-fire"></i>
-            <h1>NeoBlaze</h1>
+            <div>
+                <h1>NeoBlaze</h1>
+                <div class="tagline">Hard work is for losers, gambling is for winners</div>
+            </div>
         </div>
         <div class="wallet">
             <i class="fas fa-wallet"></i>
@@ -497,16 +510,17 @@
                             <span>BET AMOUNT</span>
                             <span id="betValue">1,000 INR</span>
                         </div>
-                        <input type="range" id="betSlider" min="100" max="5000" step="100" value="1000">
+                        <input type="range" id="betSlider" min="100" max="100000" step="100" value="1000">
                     </div>
                     
                     <div class="amount-input">
-                        <input type="number" id="betInput" min="100" max="5000" value="1000">
+                        <input type="number" id="betInput" min="100" value="1000">
                         <div class="quick-bets">
                             <button data-amount="100">100</button>
                             <button data-amount="500">500</button>
                             <button data-amount="1000">1,000</button>
-                            <button data-amount="2500">2,500</button>
+                            <button data-amount="5000">5,000</button>
+                            <button id="maxBet">MAX</button>
                         </div>
                     </div>
                     
@@ -572,7 +586,9 @@
             totalWins: 0,
             highestMultiplier: 0,
             lastCrash: 0,
-            gameInterval: null
+            gameInterval: null,
+            isNewPlayer: true,
+            newPlayerGamesLeft: 5
         };
         
         // DOM Elements
@@ -587,6 +603,7 @@
         const lastCrash = document.getElementById('lastCrash');
         const multiplierDisplay = document.querySelector('.multiplier-display');
         const leaderboardElement = document.getElementById('leaderboard');
+        const maxBetButton = document.getElementById('maxBet');
         
         // Stats elements
         const highestMultiplierElement = document.getElementById('highestMultiplier');
@@ -639,27 +656,84 @@
             'Ishani', 'Saanvi', 'Sara', 'Anika', 'Advika', 'Riya', 'Myra', 'Avni', 'Tara', 'Amaira', 'Ira'
         ];
         
+        // Leaderboard update interval
+        let leaderboardInterval;
+        
+        // Load game state from localStorage
+        function loadGameState() {
+            const savedState = localStorage.getItem('neoblazeGameState');
+            if (savedState) {
+                const parsedState = JSON.parse(savedState);
+                Object.assign(gameState, parsedState);
+                
+                // After loading, check if player is still new
+                if (gameState.gamesPlayed >= 5) {
+                    gameState.isNewPlayer = false;
+                    gameState.newPlayerGamesLeft = 0;
+                } else {
+                    gameState.newPlayerGamesLeft = 5 - gameState.gamesPlayed;
+                }
+            }
+            updateUIFromState();
+        }
+        
+        // Save game state to localStorage
+        function saveGameState() {
+            localStorage.setItem('neoblazeGameState', JSON.stringify(gameState));
+        }
+        
         // Initialize game
         function initGame() {
-            updateBalance();
+            loadGameState();
             generateLeaderboard();
-            updateStats();
             
             // Set up event listeners
             betSlider.addEventListener('input', updateBetAmount);
             betInput.addEventListener('input', updateBetFromInput);
             
             document.querySelectorAll('.quick-bets button').forEach(button => {
-                button.addEventListener('click', () => {
-                    const amount = parseInt(button.getAttribute('data-amount'));
-                    betSlider.value = amount;
-                    betInput.value = amount;
-                    updateBetValue(amount);
-                });
+                if (button.id !== 'maxBet') {
+                    button.addEventListener('click', () => {
+                        const amount = parseInt(button.getAttribute('data-amount'));
+                        betSlider.value = amount;
+                        betInput.value = amount;
+                        updateBetValue(amount);
+                    });
+                }
+            });
+            
+            maxBetButton.addEventListener('click', () => {
+                betSlider.value = gameState.balance;
+                betInput.value = gameState.balance;
+                updateBetValue(gameState.balance);
             });
             
             betButton.addEventListener('click', placeBet);
             cashoutButton.addEventListener('click', cashout);
+            
+            // Update slider max to current balance
+            updateSliderMax();
+            
+            // Start leaderboard updates
+            startLeaderboardUpdates();
+        }
+        
+        // Update UI from game state
+        function updateUIFromState() {
+            updateBalance();
+            updateStats();
+            updateSliderMax();
+            
+            // Set bet to 10% of balance or 100, whichever is larger
+            const defaultBet = Math.max(100, Math.floor(gameState.balance * 0.1));
+            betSlider.value = defaultBet;
+            betInput.value = defaultBet;
+            updateBetValue(defaultBet);
+        }
+        
+        // Update slider max to current balance
+        function updateSliderMax() {
+            betSlider.max = gameState.balance;
         }
         
         // Update bet amount
@@ -673,7 +747,7 @@
             let amount = parseInt(betInput.value);
             if (isNaN(amount)) amount = 100;
             if (amount < 100) amount = 100;
-            if (amount > 5000) amount = 5000;
+            if (amount > gameState.balance) amount = gameState.balance;
             
             betInput.value = amount;
             betSlider.value = amount;
@@ -682,6 +756,34 @@
         
         function updateBetValue(amount) {
             betValue.textContent = amount.toLocaleString('en-IN') + ' INR';
+        }
+        
+        // Generate crash point based on probability
+        function generateCrashPoint() {
+            const random = Math.random();
+            
+            // For new players (first 5 games)
+            if (gameState.isNewPlayer && gameState.newPlayerGamesLeft > 0) {
+                // 50% chance: return between 0x and 7x
+                if (random < 0.5) {
+                    return 1 + (Math.random() * 6); // 1x to 7x
+                }
+                // 50% chance: return between 0x and 2x
+                else {
+                    return 1 + (Math.random() * 1); // 1x to 2x
+                }
+            }
+            // For regular players
+            else {
+                // 99.9% chance: return between 0x and 3x
+                if (random < 0.999) {
+                    return 1 + (Math.random() * 2); // 1x to 3x
+                }
+                // 0.1% chance: return between 3x and 10x
+                else {
+                    return 3 + (Math.random() * 7); // 3x to 10x
+                }
+            }
         }
         
         // Place bet
@@ -693,6 +795,10 @@
                 gameStatus.textContent = 'Insufficient balance!';
                 return;
             }
+            if (betAmount < 100) {
+                gameStatus.textContent = 'Minimum bet is 100 INR!';
+                return;
+            }
             
             // Start game
             gameState.currentBet = betAmount;
@@ -700,8 +806,8 @@
             gameState.gameActive = true;
             gameState.currentMultiplier = 1.00;
             
-            // Generate crash point (1.00x - 25.00x)
-            gameState.crashPoint = 1 + (Math.random() * 24);
+            // Generate crash point based on probability
+            gameState.crashPoint = generateCrashPoint();
             
             // Update UI
             updateBalance();
@@ -717,6 +823,9 @@
             
             // Start game loop
             startGameLoop();
+            
+            // Save state
+            saveGameState();
         }
         
         // Start game loop
@@ -778,6 +887,14 @@
                 gameStatus.textContent = 'Cashed out at ' + gameState.currentMultiplier.toFixed(2) + 'x!';
             }
             
+            // Update new player status
+            if (gameState.isNewPlayer && gameState.newPlayerGamesLeft > 0) {
+                gameState.newPlayerGamesLeft--;
+                if (gameState.newPlayerGamesLeft === 0) {
+                    gameState.isNewPlayer = false;
+                }
+            }
+            
             // Reset game state
             gameState.gameActive = false;
             gameState.currentMultiplier = 1.00;
@@ -786,6 +903,7 @@
             // Update UI
             updateBalance();
             updateStats();
+            updateSliderMax();
             betButton.disabled = false;
             cashoutButton.disabled = true;
             
@@ -797,6 +915,9 @@
             setTimeout(() => {
                 multiplierDisplay.classList.remove('pulse');
             }, 2000);
+            
+            // Save state
+            saveGameState();
         }
         
         // Update balance display
@@ -820,8 +941,13 @@
             leaderboardElement.innerHTML = '';
             
             // Generate random leaderboard entries
-            for (let i = 0; i < 8; i++) {
-                const multiplier = (1 + (Math.random() * 20)).toFixed(2);
+            for (let i = 0; i < 15; i++) {
+                // Higher chance for big wins in leaderboard
+                const isBigWin = Math.random() < 0.3;
+                const multiplier = isBigWin ? 
+                    (5 + (Math.random() * 5)).toFixed(2) : // 5x-10x
+                    (1 + (Math.random() * 4)).toFixed(2); // 1x-5x
+                
                 const amount = Math.floor(500 + (Math.random() * 9500));
                 const winnings = Math.floor(amount * parseFloat(multiplier));
                 
@@ -868,12 +994,44 @@
                 winnings: winnings
             });
             
-            // Sort and keep top 8
+            // Sort and keep top 15
             leaderboard.sort((a, b) => b.winnings - a.winnings);
-            if (leaderboard.length > 8) leaderboard.pop();
+            if (leaderboard.length > 15) leaderboard.pop();
             
             // Regenerate leaderboard
             generateLeaderboard();
+        }
+        
+        // Start leaderboard updates
+        function startLeaderboardUpdates() {
+            clearInterval(leaderboardInterval);
+            
+            // Update leaderboard every 3-8 seconds
+            leaderboardInterval = setInterval(() => {
+                // Randomly replace an entry (except top 3) with a new one
+                if (leaderboard.length > 3) {
+                    const randomIndex = Math.floor(3 + Math.random() * (leaderboard.length - 3));
+                    
+                    // Higher chance for big wins in updates
+                    const isBigWin = Math.random() < 0.4;
+                    const multiplier = isBigWin ? 
+                        (5 + (Math.random() * 5)).toFixed(2) : // 5x-10x
+                        (1 + (Math.random() * 4)).toFixed(2); // 1x-5x
+                    
+                    const amount = Math.floor(500 + (Math.random() * 9500));
+                    const winnings = Math.floor(amount * parseFloat(multiplier));
+                    
+                    leaderboard[randomIndex] = {
+                        name: playerNames[Math.floor(Math.random() * playerNames.length)],
+                        multiplier: multiplier,
+                        winnings: winnings
+                    };
+                    
+                    // Sort and regenerate
+                    leaderboard.sort((a, b) => b.winnings - a.winnings);
+                    generateLeaderboard();
+                }
+            }, 3000 + Math.random() * 5000); // Random interval between 3-8 seconds
         }
         
         // Start countdown timer
@@ -892,6 +1050,12 @@
         window.addEventListener('load', () => {
             initGame();
             startCountdown();
+        });
+        
+        // Save state when page is unloaded
+        window.addEventListener('beforeunload', () => {
+            saveGameState();
+            clearInterval(leaderboardInterval);
         });
     </script>
 </body>
